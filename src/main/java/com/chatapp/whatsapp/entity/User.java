@@ -4,13 +4,21 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
+@Builder
 @Entity
 @Table(name = "users")
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
 public class User {
 
     @Id
@@ -35,8 +43,7 @@ public class User {
     @Column(name = "user_photo")
     private String userPhoto; // Store file path or URL
 
-    @Column(name = "is_active")
-    private Boolean isActive = true;
+
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
@@ -45,80 +52,128 @@ public class User {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+    // Add these fields to your existing User entity
+    @Column(name = "display_name")
+    private String displayName;
 
-    // Constructors
-    public User() {}
+    @Column(name = "profile_image")
+    private String profileImage;
 
-    public User(String username, String password, String email, String userPhoto) {
-        this.username = username;
-        this.password = password;
-        this.email = email;
-        this.userPhoto = userPhoto;
+    @Column(name = "bio")
+    private String bio;
+
+    @Column(name = "phone_number")
+    private String phoneNumber;
+
+    @Column(name = "is_online")
+    @Builder.Default
+    private Boolean isOnline = false;
+
+    @Column(name = "is_active")
+    @Builder.Default
+    private Boolean isActive = true;
+
+    @Column(name = "last_seen")
+    private LocalDateTime lastSeen;
+
+    @Column(name = "status")
+    @Builder.Default
+    private String status = "OFFLINE"; // ONLINE, OFFLINE, AWAY, BUSY
+
+    @Column(name = "privacy_settings")
+    @Builder.Default
+    private String privacySettings = "PUBLIC"; // PUBLIC, FRIENDS, PRIVATE
+
+    @Column(name = "notification_enabled")
+    @Builder.Default
+    private Boolean notificationEnabled = true;
+
+    @Column(name = "two_factor_enabled")
+    @Builder.Default
+    private Boolean twoFactorEnabled = false;
+
+    // Helper methods for User entity
+    public void setOnline() {
+        this.isOnline = true;
+        this.status = "ONLINE";
+        this.lastSeen = LocalDateTime.now();
     }
 
-    // Getters and Setters
-    public Long getId() {
-        return id;
+    public void setOffline() {
+        this.isOnline = false;
+        this.status = "OFFLINE";
+        this.lastSeen = LocalDateTime.now();
     }
 
-    public void setId(Long id) {
-        this.id = id;
+    public void setAway() {
+        this.status = "AWAY";
+        this.lastSeen = LocalDateTime.now();
     }
 
-    public String getUsername() {
-        return username;
+    public void setBusy() {
+        this.status = "BUSY";
+        this.lastSeen = LocalDateTime.now();
     }
 
-    public void setUsername(String username) {
-        this.username = username;
+    public boolean isCurrentlyOnline() {
+        return Boolean.TRUE.equals(isOnline);
     }
 
-    public String getPassword() {
-        return password;
+    public boolean isCurrentlyActive() {
+        return Boolean.TRUE.equals(isActive);
     }
 
-    public void setPassword(String password) {
-        this.password = password;
+    public String getDisplayNameOrUsername() {
+        return displayName != null && !displayName.isEmpty() ? displayName : username;
     }
 
-    public String getEmail() {
-        return email;
+    public boolean hasProfileImage() {
+        return profileImage != null && !profileImage.isEmpty();
     }
 
-    public void setEmail(String email) {
-        this.email = email;
+    public boolean hasBio() {
+        return bio != null && !bio.isEmpty();
     }
 
-    public String getUserPhoto() {
-        return userPhoto;
+    public boolean hasPhoneNumber() {
+        return phoneNumber != null && !phoneNumber.isEmpty();
     }
 
-    public void setUserPhoto(String userPhoto) {
-        this.userPhoto = userPhoto;
+    public boolean isNotificationEnabled() {
+        return Boolean.TRUE.equals(notificationEnabled);
     }
 
-    public Boolean getIsActive() {
-        return isActive;
+    public boolean isTwoFactorEnabled() {
+        return Boolean.TRUE.equals(twoFactorEnabled);
     }
 
-    public void setIsActive(Boolean isActive) {
-        this.isActive = isActive;
+    public boolean isPrivacyPublic() {
+        return "PUBLIC".equals(privacySettings);
     }
 
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
+    public boolean isPrivacyFriends() {
+        return "FRIENDS".equals(privacySettings);
     }
 
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
+    public boolean isPrivacyPrivate() {
+        return "PRIVATE".equals(privacySettings);
     }
 
-    public LocalDateTime getUpdatedAt() {
-        return updatedAt;
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+        if (isOnline == null) isOnline = false;
+        if (isActive == null) isActive = true;
+        if (notificationEnabled == null) notificationEnabled = true;
+        if (twoFactorEnabled == null) twoFactorEnabled = false;
+        if (status == null) status = "OFFLINE";
+        if (privacySettings == null) privacySettings = "PUBLIC";
     }
 
-    public void setUpdatedAt(LocalDateTime updatedAt) {
-        this.updatedAt = updatedAt;
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
     }
 
     @Override

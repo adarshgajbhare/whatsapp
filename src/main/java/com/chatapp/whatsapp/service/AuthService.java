@@ -4,14 +4,16 @@ import com.chatapp.whatsapp.dto.SignUpRequest;
 import com.chatapp.whatsapp.dto.LoginRequest;
 import com.chatapp.whatsapp.dto.UserResponse;
 import com.chatapp.whatsapp.entity.User;
-
 import com.chatapp.whatsapp.respository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class AuthService {
@@ -22,7 +24,7 @@ public class AuthService {
     @Autowired
     private FileUploadService fileUploadService;
 
-    // Sign up user
+    // Existing methods...
     public UserResponse signUp(SignUpRequest request, MultipartFile userPhoto) throws IOException {
         // Check if username already exists
         if (userRepository.existsByUsername(request.getUsername())) {
@@ -66,7 +68,6 @@ public class AuthService {
         return mapToUserResponse(savedUser);
     }
 
-    // Login user
     public UserResponse login(LoginRequest request) {
         // Find user by username or email
         Optional<User> userOptional = userRepository.findByUsernameOrEmail(request.getUsernameOrEmail());
@@ -91,7 +92,6 @@ public class AuthService {
         return mapToUserResponse(user);
     }
 
-    // Get user by ID
     public UserResponse getUserById(Long id) {
         Optional<User> userOptional = userRepository.findById(id);
         if (userOptional.isEmpty()) {
@@ -99,6 +99,29 @@ public class AuthService {
         }
 
         return mapToUserResponse(userOptional.get());
+    }
+
+    // NEW: User search functionality
+    public List<UserResponse> searchUsersByUsername(String username, Pageable pageable) {
+        List<User> users = userRepository.findByUsernameContainingIgnoreCaseAndIsActiveTrue(username, pageable);
+        return users.stream()
+                .map(this::mapToUserResponse)
+                .collect(Collectors.toList());
+    }
+
+    public UserResponse findByExactUsername(String username) {
+        Optional<User> userOptional = userRepository.findByUsernameAndIsActiveTrue(username);
+        if (userOptional.isEmpty()) {
+            throw new RuntimeException("User not found");
+        }
+        return mapToUserResponse(userOptional.get());
+    }
+
+    public List<UserResponse> getAllActiveUsers(Pageable pageable) {
+        List<User> users = userRepository.findByIsActiveTrueOrderByUsernameAsc(pageable);
+        return users.stream()
+                .map(this::mapToUserResponse)
+                .collect(Collectors.toList());
     }
 
     // Helper method to map User entity to UserResponse DTO
