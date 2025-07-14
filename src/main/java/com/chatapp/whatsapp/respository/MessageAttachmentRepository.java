@@ -5,17 +5,18 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.jpa.repository.Modifying;
 import java.util.List;
 import java.util.Optional;
-
 @Repository
 public interface MessageAttachmentRepository extends JpaRepository<MessageAttachment, Long> {
 
     /**
-     * Find attachments by message ID
+     * Find attachments by message ID - FIXED
      */
-    List<MessageAttachment> findByMessageId(Long messageId);
+    @Query("SELECT ma FROM MessageAttachment ma WHERE ma.message.id = :messageId")
+    List<MessageAttachment> findByMessageId(@Param("messageId") Long messageId);
 
     /**
      * Find attachment by file path
@@ -92,17 +93,19 @@ public interface MessageAttachmentRepository extends JpaRepository<MessageAttach
     Long getTotalStorageByConversation(@Param("conversationId") Long conversationId);
 
     /**
-     * Delete attachments by message ID
+     * Delete attachments by message ID - FIXED WITH @Query
      */
-    void deleteByMessageId(Long messageId);
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MessageAttachment ma WHERE ma.message.id = :messageId")
+    void deleteByMessageId(@Param("messageId") Long messageId);
 
     /**
      * Find recent attachments
      */
     @Query("SELECT ma FROM MessageAttachment ma " +
             "WHERE ma.message.conversation.id = :conversationId " +
-            "ORDER BY ma.uploadedAt DESC " +
-            "LIMIT :limit")
+            "ORDER BY ma.uploadedAt DESC")
     List<MessageAttachment> findRecentAttachments(@Param("conversationId") Long conversationId,
                                                   @Param("limit") int limit);
 }

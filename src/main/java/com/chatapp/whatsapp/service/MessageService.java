@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -79,14 +78,15 @@ public class MessageService {
         Conversation conversation = getOrCreatePrivateConversation(senderId, recipient.getId());
 
         // Create message
-        Message message = new Message();
-        message.setConversationId(conversation.getId());
-        message.setSenderId(senderId);
-        message.setContent(content);
-        message.setMessageType("TEXT");
-        message.setSentAt(LocalDateTime.now());
-        message.setIsDeleted(false);
-        message.setStatus("SENT");
+        Message message = Message.builder()
+                .conversation(conversation)
+                .senderId(senderId)
+                .content(content)
+                .messageType("TEXT")
+                .sentAt(LocalDateTime.now())
+                .isDeleted(false)
+                .status("SENT")
+                .build();
 
         Message savedMessage = messageRepository.save(message);
 
@@ -99,11 +99,11 @@ public class MessageService {
 
         // Send via WebSocket
         ChatMessageDTO chatMessage = ChatMessageDTO.builder()
-            .content(content)
-            .senderUsername(userRepository.findById(senderId).get().getUsername())
-            .messageType("TEXT")
-            .sentAt(LocalDateTime.now())
-            .build();
+                .content(content)
+                .senderUsername(userRepository.findById(senderId).get().getUsername())
+                .messageType("TEXT")
+                .sentAt(LocalDateTime.now())
+                .build();
 
         messagingTemplate.convertAndSend("/topic/conversation/" + conversation.getId(), chatMessage);
 
@@ -111,7 +111,7 @@ public class MessageService {
     }
 
     /**
-     * Send message with file attachment
+     * Send message with file attachment - FIXED
      */
     public MessageDTO sendMessageWithAttachment(Long senderId, String recipientUsername,
                                                 String content, MultipartFile file) throws IOException {
@@ -131,25 +131,27 @@ public class MessageService {
         String fileName = saveFile(file);
 
         // Create message
-        Message message = new Message();
-        message.setConversationId(conversation.getId());
-        message.setSenderId(senderId);
-        message.setContent(content != null ? content : "");
-        message.setMessageType(getMessageTypeFromFile(file));
-        message.setSentAt(LocalDateTime.now());
-        message.setIsDeleted(false);
-        message.setStatus("SENT");
+        Message message = Message.builder()
+                .conversation(conversation)
+                .senderId(senderId)
+                .content(content != null ? content : "")
+                .messageType(getMessageTypeFromFile(file))
+                .sentAt(LocalDateTime.now())
+                .isDeleted(false)
+                .status("SENT")
+                .build();
 
         Message savedMessage = messageRepository.save(message);
 
-        // Create attachment record
-        MessageAttachment attachment = new MessageAttachment();
-        attachment.setMessageId(savedMessage.getId());
-        attachment.setFileName(file.getOriginalFilename());
-        attachment.setFilePath(fileName);
-        attachment.setFileSize(file.getSize());
-        attachment.setMimeType(file.getContentType());
-        attachment.setUploadedAt(LocalDateTime.now());
+        // Create attachment record - FIXED: Use the relationship directly
+        MessageAttachment attachment = MessageAttachment.builder()
+                .message(savedMessage)  // Use the relationship, not setMessageId
+                .fileName(file.getOriginalFilename())
+                .filePath(fileName)
+                .fileSize(file.getSize())
+                .mimeType(file.getContentType())
+                .uploadedAt(LocalDateTime.now())
+                .build();
 
         attachmentRepository.save(attachment);
 
@@ -162,11 +164,11 @@ public class MessageService {
 
         // Send via WebSocket
         ChatMessageDTO chatMessage = ChatMessageDTO.builder()
-            .content(content != null ? content : "📎 " + file.getOriginalFilename())
-            .senderUsername(userRepository.findById(senderId).get().getUsername())
-            .messageType("TEXT")
-            .sentAt(LocalDateTime.now())
-            .build();
+                .content(content != null ? content : "📎 " + file.getOriginalFilename())
+                .senderUsername(userRepository.findById(senderId).get().getUsername())
+                .messageType("TEXT")
+                .sentAt(LocalDateTime.now())
+                .build();
 
         messagingTemplate.convertAndSend("/topic/conversation/" + conversation.getId(), chatMessage);
 
@@ -197,11 +199,11 @@ public class MessageService {
             User sender = userRepository.findById(senderId).orElseThrow(() -> new RuntimeException("Sender not found"));
 
             ChatMessageDTO typingMessage = ChatMessageDTO.builder()
-                .senderId(senderId)
-                .senderUsername(sender.getUsername())
-                .messageType(isTyping ? "TYPING_START" : "TYPING_STOP")
-                .sentAt(LocalDateTime.now())
-                .build();
+                    .senderId(senderId)
+                    .senderUsername(sender.getUsername())
+                    .messageType(isTyping ? "TYPING_START" : "TYPING_STOP")
+                    .sentAt(LocalDateTime.now())
+                    .build();
 
             messagingTemplate.convertAndSend("/topic/conversation/" + conversation.get().getId(),
                     typingMessage);
@@ -215,14 +217,15 @@ public class MessageService {
         // If conversation ID is provided, use it
         if (chatMessage.getConversationId() != null) {
             // Create message
-            Message message = new Message();
-            message.setConversationId(chatMessage.getConversationId());
-            message.setSenderId(chatMessage.getSenderId());
-            message.setContent(chatMessage.getContent());
-            message.setMessageType(chatMessage.getMessageType() != null ? chatMessage.getMessageType() : "TEXT");
-            message.setSentAt(LocalDateTime.now());
-            message.setIsDeleted(false);
-            message.setStatus("SENT");
+            Message message = Message.builder()
+                    .conversation(conversationRepository.findById(chatMessage.getConversationId()).orElseThrow())
+                    .senderId(chatMessage.getSenderId())
+                    .content(chatMessage.getContent())
+                    .messageType(chatMessage.getMessageType() != null ? chatMessage.getMessageType() : "TEXT")
+                    .sentAt(LocalDateTime.now())
+                    .isDeleted(false)
+                    .status("SENT")
+                    .build();
 
             Message savedMessage = messageRepository.save(message);
 
@@ -255,11 +258,12 @@ public class MessageService {
         }
 
         // Create new conversation
-        Conversation conversation = new Conversation();
-        conversation.setConversationType("PRIVATE");
-        conversation.setCreatedBy(user1Id);
-        conversation.setCreatedAt(LocalDateTime.now());
-        conversation.setUpdatedAt(LocalDateTime.now());
+        Conversation conversation = Conversation.builder()
+                .conversationType("PRIVATE")
+                .createdBy(user1Id)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
 
         Conversation savedConversation = conversationRepository.save(conversation);
 
@@ -271,14 +275,18 @@ public class MessageService {
     }
 
     /**
-     * Add participant to conversation
+     * Add participant to conversation - FIXED
      */
     private void addParticipantToConversation(Long conversationId, Long userId) {
-        ConversationParticipant participant = new ConversationParticipant();
-        participant.setConversationId(conversationId);
-        participant.setUserId(userId);
-        participant.setJoinedAt(LocalDateTime.now());
-        participant.setIsActive(true);
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found"));
+
+        ConversationParticipant participant = ConversationParticipant.builder()
+                .conversation(conversation)  // Use the relationship, not setConversationId
+                .userId(userId)
+                .joinedAt(LocalDateTime.now())
+                .isActive(true)
+                .build();
 
         participantRepository.save(participant);
     }
