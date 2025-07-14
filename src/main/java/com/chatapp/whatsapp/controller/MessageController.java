@@ -1,14 +1,9 @@
 package com.chatapp.whatsapp.controller;
 
-import com.chatapp.whatsapp.dto.ChatMessageDTO;
 import com.chatapp.whatsapp.dto.MessageDTO;
 import com.chatapp.whatsapp.dto.UserDTO;
 import com.chatapp.whatsapp.service.MessageService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -82,25 +77,6 @@ public class MessageController {
         }
     }
 
-    /**
-     * Get conversation messages with pagination
-     */
-    @GetMapping("/conversation/{conversationId}")
-    public ResponseEntity<Page<MessageDTO>> getConversationMessages(
-            @PathVariable Long conversationId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(defaultValue = "sentAt") String sortBy,
-            @RequestParam(defaultValue = "desc") String sortDir) {
-
-        Sort sort = sortDir.equalsIgnoreCase("desc") ?
-                Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
-
-        Pageable pageable = PageRequest.of(page, size, sort);
-        Page<MessageDTO> messages = messageService.getConversationMessages(conversationId, pageable);
-
-        return ResponseEntity.ok(messages);
-    }
 
     /**
      * Send typing indicator
@@ -113,14 +89,4 @@ public class MessageController {
         messageService.sendTypingIndicator(senderId, recipientUsername, isTyping);
         return ResponseEntity.ok().build();
     }
-
-    /**
-     * WebSocket message handler - Removed to resolve ambiguous mapping with WebSocketController
-     * This functionality is now handled by WebSocketController.sendMessage()
-     */
-
-    /**
-     * WebSocket typing indicator handler - Removed to resolve ambiguous mapping with WebSocketController
-     * This functionality is now handled by WebSocketController.sendTypingIndicator()
-     */
 }

@@ -89,4 +89,14 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
             "AND EXISTS (SELECT 1 FROM Message m WHERE m.conversation = c) " +
             "ORDER BY c.updatedAt DESC")
     List<Conversation> findRecentConversationsWithMessages(@Param("userId") Long userId, Pageable pageable);
+
+    /**
+     * Find groups for a specific user by name (case-insensitive search)
+     */
+    @Query("SELECT c FROM Conversation c JOIN c.participants p " +
+            "WHERE p.userId = :userId AND c.conversationType = 'GROUP' " +
+            "AND LOWER(c.name) LIKE LOWER(CONCAT('%', :name, '%')) " +
+            "AND p.isActive = true ORDER BY c.updatedAt DESC")
+    Page<Conversation> findUserGroupsByNameContainingIgnoreCase(@Param("userId") Long userId, @Param("name") String name, Pageable pageable);
+
 }

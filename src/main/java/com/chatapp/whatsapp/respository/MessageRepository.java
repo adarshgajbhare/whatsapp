@@ -16,9 +16,10 @@ import java.util.Optional;
 public interface MessageRepository extends JpaRepository<Message, Long> {
 
     /**
-     * Find messages by conversation ID (excluding deleted messages)
+     * CORRECTED METHOD NAME
+     * Find messages by the ID of the related Conversation object (excluding deleted messages)
      */
-    Page<Message> findByConversationIdAndIsDeletedFalse(Long conversationId, Pageable pageable);
+    Page<Message> findByConversation_IdAndIsDeletedFalse(Long conversationId, Pageable pageable);
 
     /**
      * Find all messages in conversation (including deleted)

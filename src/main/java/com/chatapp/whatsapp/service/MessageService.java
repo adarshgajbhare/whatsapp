@@ -8,7 +8,6 @@ import com.chatapp.whatsapp.entity.ConversationParticipant;
 import com.chatapp.whatsapp.entity.Message;
 import com.chatapp.whatsapp.entity.MessageAttachment;
 import com.chatapp.whatsapp.entity.User;
-
 import com.chatapp.whatsapp.respository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -28,6 +27,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -41,43 +41,29 @@ public class MessageService {
     private final SimpMessageSendingOperations messagingTemplate;
 
     // File storage paths
-    private final String PICTURE_DIR = "root/picture/";
-    private final String VIDEO_DIR = "root/video/";
-    private final String DOCUMENT_DIR = "root/documents/";
+    private final String UPLOAD_DIR = "uploads";
+    private final String PICTURE_DIR = UPLOAD_DIR + "/pictures/";
+    private final String VIDEO_DIR = UPLOAD_DIR + "/videos/";
+    private final String DOCUMENT_DIR = UPLOAD_DIR + "/documents/";
     private final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
-    /**
-     * Search users by username (fuzzy search)
-     */
     public List<UserDTO> searchUsers(String username, Long currentUserId) {
         List<User> users = userRepository.findByUsernameContainingIgnoreCaseAndIdNotAndIsActiveTrue(
                 username, currentUserId);
-
         return users.stream()
                 .map(this::convertUserToDTO)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Find user by exact username
-     */
     public Optional<UserDTO> findUserByUsername(String username) {
         return userRepository.findByUsernameAndIsActiveTrue(username)
                 .map(this::convertUserToDTO);
     }
 
-    /**
-     * Send text message between users
-     */
     public MessageDTO sendMessage(Long senderId, String recipientUsername, String content) {
-        // Find recipient user
         User recipient = userRepository.findByUsernameAndIsActiveTrue(recipientUsername)
                 .orElseThrow(() -> new RuntimeException("Recipient not found"));
-
-        // Get or create conversation
         Conversation conversation = getOrCreatePrivateConversation(senderId, recipient.getId());
-
-        // Create message
         Message message = Message.builder()
                 .conversation(conversation)
                 .senderId(senderId)
@@ -87,50 +73,29 @@ public class MessageService {
                 .isDeleted(false)
                 .status("SENT")
                 .build();
-
         Message savedMessage = messageRepository.save(message);
-
-        // Update conversation timestamp
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
-
-        // Convert to DTO
         MessageDTO messageDTO = convertMessageToDTO(savedMessage);
-
-        // Send via WebSocket
         ChatMessageDTO chatMessage = ChatMessageDTO.builder()
                 .content(content)
                 .senderUsername(userRepository.findById(senderId).get().getUsername())
                 .messageType("TEXT")
                 .sentAt(LocalDateTime.now())
                 .build();
-
         messagingTemplate.convertAndSend("/topic/conversation/" + conversation.getId(), chatMessage);
-
         return messageDTO;
     }
 
-    /**
-     * Send message with file attachment - FIXED
-     */
     public MessageDTO sendMessageWithAttachment(Long senderId, String recipientUsername,
                                                 String content, MultipartFile file) throws IOException {
-        // Validate file size
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new RuntimeException("File size exceeds 10MB limit");
         }
-
-        // Find recipient user
         User recipient = userRepository.findByUsernameAndIsActiveTrue(recipientUsername)
                 .orElseThrow(() -> new RuntimeException("Recipient not found"));
-
-        // Get or create conversation
         Conversation conversation = getOrCreatePrivateConversation(senderId, recipient.getId());
-
-        // Save file
-        String fileName = saveFile(file);
-
-        // Create message
+        String filePath = saveFile(file); // Corrected variable name for clarity
         Message message = Message.builder()
                 .conversation(conversation)
                 .senderId(senderId)
@@ -140,83 +105,55 @@ public class MessageService {
                 .isDeleted(false)
                 .status("SENT")
                 .build();
-
         Message savedMessage = messageRepository.save(message);
-
-        // Create attachment record - FIXED: Use the relationship directly
         MessageAttachment attachment = MessageAttachment.builder()
-                .message(savedMessage)  // Use the relationship, not setMessageId
+                .message(savedMessage)
                 .fileName(file.getOriginalFilename())
-                .filePath(fileName)
+                .filePath(filePath)
                 .fileSize(file.getSize())
                 .mimeType(file.getContentType())
                 .uploadedAt(LocalDateTime.now())
                 .build();
-
         attachmentRepository.save(attachment);
-
-        // Update conversation timestamp
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
-
-        // Convert to DTO
         MessageDTO messageDTO = convertMessageToDTO(savedMessage);
-
-        // Send via WebSocket
         ChatMessageDTO chatMessage = ChatMessageDTO.builder()
                 .content(content != null ? content : "📎 " + file.getOriginalFilename())
                 .senderUsername(userRepository.findById(senderId).get().getUsername())
-                .messageType("TEXT")
+                .messageType(getMessageTypeFromFile(file))
                 .sentAt(LocalDateTime.now())
                 .build();
-
         messagingTemplate.convertAndSend("/topic/conversation/" + conversation.getId(), chatMessage);
-
         return messageDTO;
     }
 
-    /**
-     * Get messages for a conversation with pagination
-     */
     public Page<MessageDTO> getConversationMessages(Long conversationId, Pageable pageable) {
-        Page<Message> messagePage = messageRepository.findByConversationIdAndIsDeletedFalse(
+        Page<Message> messagePage = messageRepository.findByConversation_IdAndIsDeletedFalse(
                 conversationId, pageable);
-
         return messagePage.map(this::convertMessageToDTO);
     }
 
-    /**
-     * Send typing indicator
-     */
     public void sendTypingIndicator(Long senderId, String recipientUsername, boolean isTyping) {
         User recipient = userRepository.findByUsernameAndIsActiveTrue(recipientUsername)
                 .orElseThrow(() -> new RuntimeException("Recipient not found"));
-
         Optional<Conversation> conversation = conversationRepository
                 .findPrivateConversationBetweenUsers(senderId, recipient.getId());
-
         if (conversation.isPresent()) {
             User sender = userRepository.findById(senderId).orElseThrow(() -> new RuntimeException("Sender not found"));
-
             ChatMessageDTO typingMessage = ChatMessageDTO.builder()
                     .senderId(senderId)
                     .senderUsername(sender.getUsername())
                     .messageType(isTyping ? "TYPING_START" : "TYPING_STOP")
                     .sentAt(LocalDateTime.now())
                     .build();
-
             messagingTemplate.convertAndSend("/topic/conversation/" + conversation.get().getId(),
                     typingMessage);
         }
     }
 
-    /**
-     * Send message via WebSocket
-     */
     public MessageDTO sendMessage(ChatMessageDTO chatMessage) {
-        // If conversation ID is provided, use it
         if (chatMessage.getConversationId() != null) {
-            // Create message
             Message message = Message.builder()
                     .conversation(conversationRepository.findById(chatMessage.getConversationId()).orElseThrow())
                     .senderId(chatMessage.getSenderId())
@@ -226,158 +163,110 @@ public class MessageService {
                     .isDeleted(false)
                     .status("SENT")
                     .build();
-
             Message savedMessage = messageRepository.save(message);
-
-            // Update conversation timestamp
-            Conversation conversation = conversationRepository.findById(chatMessage.getConversationId())
-                    .orElseThrow(() -> new RuntimeException("Conversation not found"));
+            Conversation conversation = savedMessage.getConversation();
             conversation.setUpdatedAt(LocalDateTime.now());
             conversationRepository.save(conversation);
-
-            // Convert to DTO
             return convertMessageToDTO(savedMessage);
         } else if (chatMessage.getRecipientUsername() != null) {
-            // If recipient username is provided, find or create conversation
             return sendMessage(chatMessage.getSenderId(), chatMessage.getRecipientUsername(), chatMessage.getContent());
         } else {
             throw new RuntimeException("Either conversationId or recipientUsername must be provided");
         }
     }
 
-    /**
-     * Get or create private conversation between two users
-     */
+    // --- HELPER METHODS (THIS IS WHAT WAS MISSING) ---
+
     private Conversation getOrCreatePrivateConversation(Long user1Id, Long user2Id) {
-        // Check if conversation already exists
-        Optional<Conversation> existingConversation =
-                conversationRepository.findPrivateConversationBetweenUsers(user1Id, user2Id);
-
-        if (existingConversation.isPresent()) {
-            return existingConversation.get();
-        }
-
-        // Create new conversation
-        Conversation conversation = Conversation.builder()
-                .conversationType("PRIVATE")
-                .createdBy(user1Id)
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-
-        Conversation savedConversation = conversationRepository.save(conversation);
-
-        // Add participants
-        addParticipantToConversation(savedConversation.getId(), user1Id);
-        addParticipantToConversation(savedConversation.getId(), user2Id);
-
-        return savedConversation;
+        return conversationRepository.findPrivateConversationBetweenUsers(user1Id, user2Id)
+                .orElseGet(() -> {
+                    Conversation conversation = Conversation.builder()
+                            .conversationType("PRIVATE")
+                            .createdBy(user1Id)
+                            .createdAt(LocalDateTime.now())
+                            .updatedAt(LocalDateTime.now())
+                            .build();
+                    Conversation savedConversation = conversationRepository.save(conversation);
+                    addParticipantToConversation(savedConversation.getId(), user1Id);
+                    addParticipantToConversation(savedConversation.getId(), user2Id);
+                    return savedConversation;
+                });
     }
 
-    /**
-     * Add participant to conversation - FIXED
-     */
     private void addParticipantToConversation(Long conversationId, Long userId) {
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new RuntimeException("Conversation not found"));
-
         ConversationParticipant participant = ConversationParticipant.builder()
-                .conversation(conversation)  // Use the relationship, not setConversationId
+                .conversation(conversation)
                 .userId(userId)
                 .joinedAt(LocalDateTime.now())
                 .isActive(true)
                 .build();
-
         participantRepository.save(participant);
     }
 
-    /**
-     * Save uploaded file
-     */
     private String saveFile(MultipartFile file) throws IOException {
         String originalFilename = file.getOriginalFilename();
-        String extension = originalFilename.substring(originalFilename.lastIndexOf("."));
+        String extension = "";
+        if (originalFilename != null && originalFilename.contains(".")) {
+            extension = originalFilename.substring(originalFilename.lastIndexOf("."));
+        }
         String fileName = UUID.randomUUID().toString() + extension;
-
         String directory = getDirectoryForFile(file);
         Path directoryPath = Paths.get(directory);
-
-        // Create directory if it doesn't exist
         if (!Files.exists(directoryPath)) {
             Files.createDirectories(directoryPath);
         }
-
         Path filePath = directoryPath.resolve(fileName);
         Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
-
-        return directory + fileName;
+        // Return relative path for storage
+        return directory.replace(UPLOAD_DIR + "/", "") + fileName;
     }
 
-    /**
-     * Get directory based on file type
-     */
     private String getDirectoryForFile(MultipartFile file) {
         String contentType = file.getContentType();
         if (contentType != null) {
-            if (contentType.startsWith("image/")) {
-                return PICTURE_DIR;
-            } else if (contentType.startsWith("video/")) {
-                return VIDEO_DIR;
-            }
+            if (contentType.startsWith("image/")) return PICTURE_DIR;
+            if (contentType.startsWith("video/")) return VIDEO_DIR;
         }
         return DOCUMENT_DIR;
     }
 
-    /**
-     * Get message type from file
-     */
     private String getMessageTypeFromFile(MultipartFile file) {
         String contentType = file.getContentType();
         if (contentType != null) {
-            if (contentType.startsWith("image/")) {
-                return "IMAGE";
-            } else if (contentType.startsWith("video/")) {
-                return "VIDEO";
-            } else if (contentType.startsWith("audio/")) {
-                return "AUDIO";
-            }
+            if (contentType.startsWith("image/")) return "IMAGE";
+            if (contentType.startsWith("video/")) return "VIDEO";
+            if (contentType.startsWith("audio/")) return "AUDIO";
         }
         return "DOCUMENT";
     }
 
-    /**
-     * Convert Message entity to DTO
-     */
     private MessageDTO convertMessageToDTO(Message message) {
         MessageDTO dto = new MessageDTO();
         dto.setId(message.getId());
-        dto.setConversationId(message.getConversationId());
+        dto.setConversationId(message.getConversation().getId());
         dto.setSenderId(message.getSenderId());
         dto.setContent(message.getContent());
         dto.setMessageType(message.getMessageType());
         dto.setSentAt(message.getSentAt());
         dto.setIsDeleted(message.getIsDeleted());
         dto.setStatus(message.getStatus());
-
-        // Get sender info
-        User sender = userRepository.findById(message.getSenderId()).orElse(null);
-        if (sender != null) {
+        userRepository.findById(message.getSenderId()).ifPresent(sender -> {
             dto.setSenderUsername(sender.getUsername());
-        }
-
+            dto.setSenderDisplayName(sender.getDisplayName());
+            dto.setSenderProfileImage(sender.getProfileImage());
+        });
         return dto;
     }
 
-    /**
-     * Convert User entity to DTO
-     */
     private UserDTO convertUserToDTO(User user) {
-        UserDTO dto = new UserDTO();
-        dto.setId(user.getId());
-        dto.setUsername(user.getUsername());
-        dto.setEmail(user.getEmail());
-        dto.setDisplayName(user.getDisplayName());
-        dto.setIsOnline(user.getIsOnline());
-        return dto;
+        return UserDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .displayName(user.getDisplayName())
+                .isOnline(user.getIsOnline())
+                .build();
     }
 }
