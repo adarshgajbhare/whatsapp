@@ -8,7 +8,7 @@ import com.chatapp.whatsapp.entity.Message;
 import com.chatapp.whatsapp.entity.User;
 import com.chatapp.whatsapp.respository.ConversationParticipantRepository;
 import com.chatapp.whatsapp.respository.ConversationRepository;
-import com.chatapp.whatsapp.respository.MessageRepository;
+import com.chatapp.whatsapp.respository.*;
 import com.chatapp.whatsapp.respository.UserRepository;
 import com.chatapp.whatsapp.service.GroupService;
 import com.chatapp.whatsapp.service.MessageService;
@@ -38,7 +38,7 @@ public class ConversationController {
 
     private final ConversationRepository conversationRepository;
     private final ConversationParticipantRepository participantRepository;
-    private final MessageRepository messageRepository;
+    private final com.chatapp.whatsapp.repository.MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final MessageService messageService;
     private final GroupService groupService;
