@@ -70,8 +70,6 @@ public class MessageController {
             MessageDTO message = messageService.sendMessageWithAttachment(
                     senderId, recipientUsername, content, file);
             return ResponseEntity.ok(message);
-        } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         } catch (Exception e) {
             return ResponseEntity.badRequest().build();
         }
