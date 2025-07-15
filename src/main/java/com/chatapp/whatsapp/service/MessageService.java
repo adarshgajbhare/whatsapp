@@ -31,8 +31,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
-@Slf4j // Add logging for the service layer
+@Slf4j
 public class MessageService {
 
     private final MessageRepository messageRepository;
@@ -42,48 +41,171 @@ public class MessageService {
     private final MessageAttachmentRepository attachmentRepository;
     private final SimpMessageSendingOperations messagingTemplate;
 
-    // ... (All your existing methods like searchUsers, sendMessageWithAttachment, getConversationMessages etc. can remain here) ...
-
-    // ----------- THE NEW, CORRECTED METHOD FOR WEBSOCKETS -----------
     /**
-     * This method is specifically for saving messages coming from the WebSocket controller.
-     * It is simple, direct, and logs its actions.
+     * FIXED: Enhanced method for saving messages coming from WebSocket controller
+     * This method includes comprehensive validation and error handling
      */
+    @Transactional
     public MessageDTO saveWebSocketMessage(ChatMessageDTO chatMessage) {
-        log.info("MessageService: Attempting to save WebSocket message. Conversation ID: {}, Sender ID: {}",
-                chatMessage.getConversationId(), chatMessage.getSenderId());
+        log.info("=== WEBSOCKET MESSAGE PROCESSING START ===");
+        log.info("Conversation ID: {}, Sender ID: {}, Content: '{}'",
+                chatMessage.getConversationId(), chatMessage.getSenderId(), chatMessage.getContent());
 
-        // 1. Find the conversation, or throw an error if it doesn't exist.
-        Conversation conversation = conversationRepository.findById(chatMessage.getConversationId())
-                .orElseThrow(() -> new RuntimeException("CRITICAL: Conversation with ID " + chatMessage.getConversationId() + " not found. Cannot save message."));
+        try {
+            // 1. Validate input parameters
+            if (chatMessage.getConversationId() == null) {
+                log.error("ERROR: Conversation ID is null");
+                throw new IllegalArgumentException("Conversation ID cannot be null");
+            }
 
-        // 2. Build the Message entity to be saved.
-        Message messageToSave = Message.builder()
-                .conversation(conversation)
-                .senderId(chatMessage.getSenderId())
-                .content(chatMessage.getContent())
-                .messageType(chatMessage.getMessageType() != null ? chatMessage.getMessageType() : "TEXT")
-                .sentAt(LocalDateTime.now())
-                .isDeleted(false)
-                .isEdited(false)
-                .status("SENT")
-                .build();
+            if (chatMessage.getSenderId() == null) {
+                log.error("ERROR: Sender ID is null");
+                throw new IllegalArgumentException("Sender ID cannot be null");
+            }
 
-        // 3. Save the message to the database. This runs the INSERT query.
-        Message savedMessage = messageRepository.save(messageToSave);
-        log.info("MessageService: Successfully saved message with new ID: {}", savedMessage.getId());
+            if (chatMessage.getContent() == null || chatMessage.getContent().trim().isEmpty()) {
+                log.error("ERROR: Message content is null or empty");
+                throw new IllegalArgumentException("Message content cannot be null or empty");
+            }
 
-        // 4. Update the conversation's 'updatedAt' timestamp to keep chats sorted.
-        conversation.setUpdatedAt(LocalDateTime.now());
-        conversationRepository.save(conversation);
-        log.info("MessageService: Updated 'updated_at' timestamp for conversation ID: {}", conversation.getId());
+            // 2. Find and validate conversation
+            log.info("Looking for conversation with ID: {}", chatMessage.getConversationId());
+            Conversation conversation = conversationRepository.findById(chatMessage.getConversationId())
+                    .orElseThrow(() -> {
+                        log.error("CRITICAL: Conversation with ID {} not found", chatMessage.getConversationId());
+                        return new RuntimeException("Conversation with ID " + chatMessage.getConversationId() + " not found");
+                    });
 
-        // 5. Convert the saved entity to a DTO and return it.
-        return convertMessageToDTO(savedMessage);
+            log.info("Found conversation: ID={}, Type={}, Name={}",
+                    conversation.getId(), conversation.getConversationType(),
+                    conversation.getName() != null ? conversation.getName() : "N/A");
+
+            // 3. Validate sender exists
+            log.info("Validating sender with ID: {}", chatMessage.getSenderId());
+            User sender = userRepository.findById(chatMessage.getSenderId())
+                    .orElseThrow(() -> {
+                        log.error("CRITICAL: Sender with ID {} not found", chatMessage.getSenderId());
+                        return new RuntimeException("Sender with ID " + chatMessage.getSenderId() + " not found");
+                    });
+
+            log.info("Found sender: ID={}, Username={}, Active={}",
+                    sender.getId(), sender.getUsername(), sender.getIsActive());
+
+            // 4. Check if sender is active
+            if (!sender.getIsActive()) {
+                log.error("ERROR: Sender {} is not active", chatMessage.getSenderId());
+                throw new SecurityException("Sender account is not active");
+            }
+
+            // 5. Validate participant membership with detailed logging
+            log.info("Checking participant membership for user {} in conversation {}",
+                    chatMessage.getSenderId(), conversation.getId());
+
+            // First, get all participants for debugging
+            List<ConversationParticipant> allParticipants = participantRepository.findByConversationId(conversation.getId());
+            log.info("Total participants in conversation: {}", allParticipants.size());
+
+            for (ConversationParticipant p : allParticipants) {
+                log.info("Participant: UserID={}, Active={}, Role={}, JoinedAt={}",
+                        p.getUserId(), p.getIsActive(), p.getRole(), p.getJoinedAt());
+            }
+
+            // Check if sender is a participant
+            ConversationParticipant senderParticipant = participantRepository
+                    .findByConversationIdAndUserId(conversation.getId(), chatMessage.getSenderId())
+                    .orElseThrow(() -> {
+                        log.error("SECURITY_VIOLATION: User {} is not a participant in conversation {}",
+                                chatMessage.getSenderId(), conversation.getId());
+                        return new SecurityException("Sender is not a participant in this conversation");
+                    });
+
+            log.info("Found sender participant: UserID={}, Active={}, Role={}",
+                    senderParticipant.getUserId(), senderParticipant.getIsActive(), senderParticipant.getRole());
+
+            // Check if participant is active
+            if (!senderParticipant.getIsActive()) {
+                log.error("SECURITY_VIOLATION: User {} is not an active participant in conversation {}",
+                        chatMessage.getSenderId(), conversation.getId());
+                throw new SecurityException("Sender is not an active participant in this conversation");
+            }
+
+            // 6. Build the Message entity
+            log.info("Building message entity for database insertion");
+            Message messageToSave = Message.builder()
+                    .conversation(conversation)
+                    .senderId(chatMessage.getSenderId())
+                    .content(chatMessage.getContent().trim())
+                    .messageType(chatMessage.getMessageType() != null ? chatMessage.getMessageType() : "TEXT")
+                    .sentAt(LocalDateTime.now())
+                    .isDeleted(false)
+                    .isEdited(false)
+                    .status("SENT")
+                    .build();
+
+            log.info("Message entity built: ConversationID={}, SenderID={}, Type={}, Content length={}",
+                    messageToSave.getConversationId(), messageToSave.getSenderId(),
+                    messageToSave.getMessageType(), messageToSave.getContent().length());
+
+            // 7. Save the message to database
+            log.info("Saving message to database...");
+            Message savedMessage = messageRepository.save(messageToSave);
+            log.info("SUCCESS: Message saved with ID: {}", savedMessage.getId());
+
+            // 8. Update conversation's updatedAt timestamp
+            log.info("Updating conversation timestamp...");
+            conversation.setUpdatedAt(LocalDateTime.now());
+            conversationRepository.save(conversation);
+            log.info("SUCCESS: Conversation timestamp updated");
+
+            // 9. Convert to DTO and return
+            log.info("Converting message to DTO...");
+            MessageDTO messageDTO = convertMessageToDTO(savedMessage);
+            log.info("SUCCESS: Message DTO created with ID: {}", messageDTO.getId());
+
+            log.info("=== WEBSOCKET MESSAGE PROCESSING COMPLETE ===");
+            return messageDTO;
+
+        } catch (Exception e) {
+            log.error("=== WEBSOCKET MESSAGE PROCESSING FAILED ===");
+            log.error("Error processing message: ConversationID={}, SenderID={}, Error={}",
+                    chatMessage.getConversationId(), chatMessage.getSenderId(), e.getMessage(), e);
+            throw e; // Re-throw to be handled by the WebSocket controller
+        }
     }
 
+    // Enhanced convertMessageToDTO method with null checks
+    private MessageDTO convertMessageToDTO(Message message) {
+        if (message == null) {
+            log.error("ERROR: Attempting to convert null message to DTO");
+            throw new IllegalArgumentException("Message cannot be null");
+        }
 
-    // ----------- ALL OTHER METHODS CAN REMAIN AS THEY ARE -----------
+        MessageDTO dto = new MessageDTO();
+        dto.setId(message.getId());
+        dto.setConversationId(message.getConversationId());
+        dto.setSenderId(message.getSenderId());
+        dto.setContent(message.getContent());
+        dto.setMessageType(message.getMessageType());
+        dto.setSentAt(message.getSentAt());
+        dto.setIsDeleted(message.getIsDeleted());
+        dto.setStatus(message.getStatus());
+        dto.setIsEdited(message.getIsEdited());
+
+        // Safely get sender information
+        try {
+            userRepository.findById(message.getSenderId()).ifPresent(sender -> {
+                dto.setSenderUsername(sender.getUsername());
+                dto.setSenderDisplayName(sender.getDisplayName());
+                dto.setSenderProfileImage(sender.getProfileImage());
+            });
+        } catch (Exception e) {
+            log.warn("Warning: Could not fetch sender details for message {}: {}", message.getId(), e.getMessage());
+        }
+
+        return dto;
+    }
+
+    // ... All your other existing methods remain the same ...
 
     public List<UserDTO> searchUsers(String username, Long currentUserId) {
         List<User> users = userRepository.findByUsernameContainingIgnoreCaseAndIdNotAndIsActiveTrue(username, currentUserId);
@@ -94,16 +216,30 @@ public class MessageService {
         return userRepository.findByUsernameAndIsActiveTrue(username).map(this::convertUserToDTO);
     }
 
-    // This original method is for the REST API and is fine
     public MessageDTO sendMessage(Long senderId, String recipientUsername, String content) {
-        User recipient = userRepository.findByUsernameAndIsActiveTrue(recipientUsername).orElseThrow(() -> new RuntimeException("Recipient not found"));
+        User recipient = userRepository.findByUsernameAndIsActiveTrue(recipientUsername)
+                .orElseThrow(() -> new RuntimeException("Recipient not found"));
         Conversation conversation = getOrCreatePrivateConversation(senderId, recipient.getId());
-        Message message = Message.builder().conversation(conversation).senderId(senderId).content(content).messageType("TEXT").sentAt(LocalDateTime.now()).isDeleted(false).status("SENT").build();
+        Message message = Message.builder()
+                .conversation(conversation)
+                .senderId(senderId)
+                .content(content)
+                .messageType("TEXT")
+                .sentAt(LocalDateTime.now())
+                .isDeleted(false)
+                .status("SENT")
+                .build();
         Message savedMessage = messageRepository.save(message);
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
         MessageDTO messageDTO = convertMessageToDTO(savedMessage);
-        ChatMessageDTO chatMessage = ChatMessageDTO.builder().content(content).senderUsername(userRepository.findById(senderId).get().getUsername()).messageType("TEXT").sentAt(LocalDateTime.now()).build();
+
+        ChatMessageDTO chatMessage = ChatMessageDTO.builder()
+                .content(content)
+                .senderUsername(userRepository.findById(senderId).get().getUsername())
+                .messageType("TEXT")
+                .sentAt(LocalDateTime.now())
+                .build();
         messagingTemplate.convertAndSend("/topic/conversation/" + conversation.getId(), chatMessage);
         return messageDTO;
     }
@@ -113,45 +249,50 @@ public class MessageService {
         return messagePage.map(this::convertMessageToDTO);
     }
 
-    private MessageDTO convertMessageToDTO(Message message) {
-        MessageDTO dto = new MessageDTO();
-        dto.setId(message.getId());
-        dto.setConversationId(message.getConversation().getId());
-        dto.setSenderId(message.getSenderId());
-        dto.setContent(message.getContent());
-        dto.setMessageType(message.getMessageType());
-        dto.setSentAt(message.getSentAt());
-        dto.setIsDeleted(message.getIsDeleted());
-        dto.setStatus(message.getStatus());
-        userRepository.findById(message.getSenderId()).ifPresent(sender -> {
-            dto.setSenderUsername(sender.getUsername());
-            dto.setSenderDisplayName(sender.getDisplayName());
-            dto.setSenderProfileImage(sender.getProfileImage());
-        });
-        return dto;
-    }
-
     private UserDTO convertUserToDTO(User user) {
-        return UserDTO.builder().id(user.getId()).username(user.getUsername()).email(user.getEmail()).displayName(user.getDisplayName()).isOnline(user.getIsOnline()).build();
+        return UserDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .displayName(user.getDisplayName())
+                .isOnline(user.getIsOnline())
+                .build();
     }
 
     private Conversation getOrCreatePrivateConversation(Long user1Id, Long user2Id) {
-        return conversationRepository.findPrivateConversationBetweenUsers(user1Id, user2Id).orElseGet(() -> {
-            Conversation conversation = Conversation.builder().conversationType("PRIVATE").createdBy(user1Id).createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now()).build();
-            Conversation savedConversation = conversationRepository.save(conversation);
-            addParticipantToConversation(savedConversation.getId(), user1Id);
-            addParticipantToConversation(savedConversation.getId(), user2Id);
-            return savedConversation;
-        });
+        return conversationRepository.findPrivateConversationBetweenUsers(user1Id, user2Id)
+                .orElseGet(() -> {
+                    Conversation conversation = Conversation.builder()
+                            .conversationType("PRIVATE")
+                            .createdBy(user1Id)
+                            .createdAt(LocalDateTime.now())
+                            .updatedAt(LocalDateTime.now())
+                            .build();
+                    Conversation savedConversation = conversationRepository.save(conversation);
+                    addParticipantToConversation(savedConversation.getId(), user1Id);
+                    addParticipantToConversation(savedConversation.getId(), user2Id);
+                    return savedConversation;
+                });
     }
 
     private void addParticipantToConversation(Long conversationId, Long userId) {
-        Conversation conversation = conversationRepository.findById(conversationId).orElseThrow(() -> new RuntimeException("Conversation not found"));
-        ConversationParticipant participant = ConversationParticipant.builder().conversation(conversation).userId(userId).joinedAt(LocalDateTime.now()).isActive(true).build();
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found"));
+        ConversationParticipant participant = ConversationParticipant.builder()
+                .conversation(conversation)
+                .userId(userId)
+                .joinedAt(LocalDateTime.now())
+                .isActive(true)
+                .build();
         participantRepository.save(participant);
     }
 
-    // Other methods...
-    public MessageDTO sendMessageWithAttachment(Long senderId, String recipientUsername, String content, MultipartFile file) {return new MessageDTO();}
-    public void sendTypingIndicator(Long senderId, String recipientUsername, boolean isTyping) {}
+    // Placeholder methods
+    public MessageDTO sendMessageWithAttachment(Long senderId, String recipientUsername, String content, MultipartFile file) {
+        return new MessageDTO();
+    }
+
+    public void sendTypingIndicator(Long senderId, String recipientUsername, boolean isTyping) {
+        // Implementation here
+    }
 }
